@@ -56,7 +56,6 @@ type currentUserView struct {
 
 type reviewView struct {
 	Review
-
 	CanEdit bool
 }
 
