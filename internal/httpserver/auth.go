@@ -233,6 +233,10 @@ func parseForm(_ int64, renderer *templates.Renderer) middleware {
 }
 
 func (handler *authHandler) Logout(responseWriter http.ResponseWriter, request *http.Request) {
+	currentSession, sessionExists, _ := sessions.Current(request, handler.accounts)
+	if sessionExists == true {
+		handler.accounts.RevokeSession(request.Context(), currentSession.Session.Token)
+	}
 	challengeToken := totpLoginChallengeToken(request)
 	if err := handler.mfa.DeleteChallenge(request.Context(), challengeToken); err != nil {
 		handler.internalError(responseWriter, request, err)

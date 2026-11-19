@@ -10,6 +10,7 @@ import (
 
 	"github.com/bootdotdev/learn-web-security/internal/accounts"
 	"github.com/bootdotdev/learn-web-security/internal/auth/mfa"
+	"github.com/bootdotdev/learn-web-security/internal/auth/passwords"
 	"github.com/bootdotdev/learn-web-security/internal/auth/sessions"
 	"github.com/bootdotdev/learn-web-security/internal/httpx"
 	"github.com/bootdotdev/learn-web-security/internal/logging"
@@ -61,6 +62,7 @@ func (handler *Handler) Page(responseWriter http.ResponseWriter, request *http.R
 	if !ok {
 		return
 	}
+	handler.logger.Event("account_accessed", map[string]any{"event": "account_accessed", "userId": current.User.ID, "email": current.User.Email, "expiresAt": formatTimestamp(current.Session.ExpiresAt)})
 	if err := handler.renderPage(responseWriter, http.StatusOK, current, ""); err != nil {
 		handler.internalError(responseWriter, request, err)
 	}
@@ -69,6 +71,16 @@ func (handler *Handler) Page(responseWriter http.ResponseWriter, request *http.R
 func (handler *Handler) UpdateEmail(responseWriter http.ResponseWriter, request *http.Request) {
 	current, ok := handler.requireAuth(responseWriter, request)
 	if !ok || !handler.verifyCSRF(responseWriter, request, current.Session.CSRFToken) {
+		return
+	}
+	currentPassword, passErr := httpx.FormValue(request, "currentPassword")
+	if passErr != nil {
+		handler.errorPage(responseWriter, http.StatusBadRequest, "Invalid Request", "The submitted form is invalid.")
+		return
+	}
+	isPassVerified := passwords.Verify(currentPassword, current.User.PasswordHash)
+	if isPassVerified == false {
+		handler.renderPage(responseWriter, http.StatusForbidden, current, "Re-enter your current password to change your email.")
 		return
 	}
 	email, emailErr := httpx.FormValue(request, "email")

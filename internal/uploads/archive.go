@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"mime"
 	"os"
 	"path/filepath"
 	"strings"
@@ -66,8 +65,12 @@ func ExtractTaxDocumentArchive(encryptionKeyring Keyring, contents []byte, extra
 	identifier := uuid.NewV4()
 	importDirectory := filepath.Join(extractionDirectory, identifier.String())
 	plannedEntries := make([]plannedArchiveEntry, 0, len(archiveReader.File))
+	backSlash := `\`
 	for _, entry := range archiveReader.File {
 		entryDestination := filepath.Join(importDirectory, entry.Name)
+		if filepath.IsAbs(entry.Name) || strings.Contains(entry.Name, backSlash) || !isInsideDirectory(importDirectory, entryDestination) || entry.Mode()&os.ModeSymlink != 0 {
+			return ExtractedTaxDocumentArchive{}, fmt.Errorf("Filepath can't be absolute file path or cannot contain backslash or entryDestination is inside in ImportDirectory")
+		}
 		if isIgnoredArchiveEntry(entry.Name) {
 			continue
 		}
@@ -79,10 +82,11 @@ func ExtractTaxDocumentArchive(encryptionKeyring Keyring, contents []byte, extra
 		if err != nil {
 			return ExtractedTaxDocumentArchive{}, &ArchiveImportError{Message: "Choose a valid ZIP archive.", StatusCode: 400}
 		}
-		contentType := mime.TypeByExtension(filepath.Ext(entry.Name))
-		if contentType == "" {
-			contentType = "application/octet-stream"
+		contentType, _, valid := detectDocumentType(entryContents)
+		if !valid {
+			return ExtractedTaxDocumentArchive{}, &ArchiveImportError{Message: "Unsupported file", StatusCode: 400}
 		}
+
 		storedContents, encrypted, err := encryptDocument(entryContents, encryptionKeyring)
 		if err != nil {
 			return ExtractedTaxDocumentArchive{}, err
@@ -91,6 +95,7 @@ func ExtractTaxDocumentArchive(encryptionKeyring Keyring, contents []byte, extra
 		if encrypted {
 			storagePath += ".enc"
 		}
+
 		plannedEntries = append(plannedEntries, plannedArchiveEntry{
 			destination: storagePath, contents: storedContents, encrypted: encrypted,
 			document: ExtractedTaxDocument{OriginalName: entry.Name, StoragePath: storagePath, ContentType: contentType},
@@ -186,4 +191,12 @@ func discardArchiveAfterWriteFailure(archive ExtractedTaxDocumentArchive, err er
 		return ExtractedTaxDocumentArchive{}, errors.Join(err, discardErr)
 	}
 	return ExtractedTaxDocumentArchive{}, err
+}
+
+func isInsideDirectory(directory, candidatePath string) bool {
+	relativePath, err := filepath.Rel(directory, candidatePath)
+	if err != nil || relativePath == ".." || relativePath == "." || strings.HasPrefix(relativePath, ".."+string(filepath.Separator)) {
+		return false
+	}
+	return true
 }
