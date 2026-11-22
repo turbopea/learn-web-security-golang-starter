@@ -9,6 +9,7 @@ import (
 	"math"
 	"net"
 	"net/http"
+	"net/url"
 	"slices"
 	"strconv"
 	"strings"
@@ -29,7 +30,7 @@ func applyMiddleware(handler http.Handler, middlewareChain ...middleware) http.H
 	return handler
 }
 func nosniffContent(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(responseWriter http.ResponseWriter, request *http.Request){
+	return http.HandlerFunc(func(responseWriter http.ResponseWriter, request *http.Request) {
 		responseWriter.Header().Set("X-Content-Type-Options", "nosniff")
 		next.ServeHTTP(responseWriter, request)
 	})
@@ -245,4 +246,44 @@ func boolToInt64(value bool) int64 {
 		return 1
 	}
 	return 0
+}
+
+func sourceValidationMiddleware(appOrigin string, renderer *templates.Renderer) middleware {
+	expectedOrigin := strings.TrimRight(appOrigin, "/")
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(responseWriter http.ResponseWriter, request *http.Request) {
+			if request.Method != http.MethodPost {
+				next.ServeHTTP(responseWriter, request)
+				return
+			}
+
+			origin := request.Header.Get("Origin")
+			if origin != "" {
+				if origin != expectedOrigin {
+					http.Error(responseWriter, "requested source origin is not equal to source origin", http.StatusForbidden)
+					return
+				}
+				next.ServeHTTP(responseWriter, request)
+				return
+			}
+
+			referer := request.Header.Get("Referer")
+			if referer == "" {
+				httpx.RespondWithErrorPage(responseWriter, renderer, http.StatusForbidden, "request source is missing, malformed or untrusted", "request source is missing, malformed or untrusted")
+				return
+			}
+			parsed, err := url.Parse(referer)
+			if err != nil || parsed.Scheme == "" || parsed.Host == "" {
+				http.Error(responseWriter, "failed to parse URL", http.StatusForbidden)
+				return
+			}
+			requestedOrigin := parsed.Scheme + "://" + parsed.Host
+			if requestedOrigin != expectedOrigin {
+				http.Error(responseWriter, "Origin is not matching", http.StatusForbidden)
+				return
+			}
+
+			next.ServeHTTP(responseWriter, request)
+		})
+	}
 }
